@@ -32,5 +32,11 @@
     <ClInclude Include="HttpRequest.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="TcepListenerIOCP.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ClientThreadSplit.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

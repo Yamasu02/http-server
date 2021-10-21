@@ -118,9 +118,12 @@
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="ClientThreadSplit.h" />
     <ClInclude Include="File.h" />
     <ClInclude Include="HttpRequest.h" />
+    <ClInclude Include="TcepListenerIOCP.h" />
     <ClInclude Include="TcpListener.h" />
+    <ClInclude Include="TcpListenerEventOL.h" />
     <ClInclude Include="WebServer.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

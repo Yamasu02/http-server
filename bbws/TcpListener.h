@@ -1,125 +1,172 @@
 #pragma once
 
 #include <WS2tcpip.h>
-
+#include <string>
+#include <iostream>
+#include <vector>
 #pragma comment (lib, "ws2_32.lib")
 
-class TcpListener
+class ClientSocket
 {
-public:
+	std::string description;
+	SOCKET sock;
+	//DWORD BytesSent = 0;
+	//DWORD BytesRecv = 0;
+	//DWORD SendFlags = 0;
+	//DWORD RecvFlags = 0;
+	//std::string BytesRecv;
+	//std::string BytesToSend;
 
+	typedef int(__stdcall* HandleMsg)(const char*);
+	HandleMsg HMFuncPtr = nullptr;
 
-	TcpListener(const char* ipAddress, int port) : m_ipAddress(ipAddress), m_port(port)
+	ClientSocket(SOCKET sock,HandleMsg HMFuncPtr = nullptr)
 	{
-		//MessageBox(0, "Cant initialize WinSock", 0, MB_OK); exit(-1);
-		//Initialize WinSock
-		WSADATA wsData;
-		WORD ver = MAKEWORD(2, 2);
-		if (!WSAStartup(ver, &wsData))
-		{
-			//Create Listening Socket
-			m_socket = socket(AF_INET, SOCK_STREAM, 0);
-			if (m_socket != INVALID_SOCKET)
-			{
-				//Bind Ip address & port to listening socket
-				sockaddr_in hint;
-				hint.sin_family = AF_INET;
-				hint.sin_port = htons(m_port);
-				inet_pton(AF_INET, m_ipAddress, &hint.sin_addr);
-
-				if (bind(m_socket, (sockaddr*)&hint, sizeof(hint)) != SOCKET_ERROR)
-				{
-					//Get Socket to listen for incoming connections 
-					if (listen(m_socket, SOMAXCONN) != SOCKET_ERROR)
-					{
-						FD_ZERO(&m_master);
-						FD_SET(m_socket, &m_master);
-						return;
-					}
-				}
-			}
-		}
-	}
-
-	int Run()
-	{
-		/*Select loops through an array of sockets(a copy of the original array) and remove those which dont have sth to read from*/
-		bool running = true;
-		while (running)
-		{
-			fd_set copy = m_master;
-			int socketCount = select(0, &copy, nullptr, nullptr, nullptr);
-			for (int i = 0; i < socketCount; i++)
-			{
-				SOCKET sock = copy.fd_array[i];
-				if (sock == m_socket)
-				{
-					//Our listening socket got a connection request
-					SOCKET client = accept(m_socket, nullptr, nullptr);
-					FD_SET(client, &m_master);
-					OnClientConnected(client);
-				}
-				else
-				{
-					// a client socket has a message
-					char buf[4096];
-					ZeroMemory(buf, 4096);
-
-					int bytesIn = recv(sock, buf, 4096, 0);
-					if (bytesIn <= 0)
-					{
-						OnClientDisconnected(sock);
-						closesocket(sock);
-						FD_CLR(sock, &m_master);
-					}
-					else
-					{
-						OnMessageReceived(sock, buf, bytesIn);
-					}
-				}
-			}
-		}
-
-		FD_CLR(m_socket, &m_master);
-		closesocket(m_socket);
-
-		while (m_master.fd_count > 0)
-		{
-			SOCKET sock = m_master.fd_array[0];
-			FD_CLR(sock, &m_master);
-			closesocket(sock);
-		}
-
-		WSACleanup();
-		return 0;
-	}
-
-protected:
-
-	virtual void OnClientConnected(int clientSocket)
-	{
-
-	}
-
-	virtual void OnClientDisconnected(int clientSocket)
-	{
-
+		this->sock = sock;
+		if (HMFuncPtr != nullptr)
+			this->HMFuncPtr = HMFuncPtr;
 	}
 
 	virtual void OnMessageReceived(int clientSocket, const char* msg, int length)
 	{
-
+		(*HMFuncPtr)(msg);
+		delete[] msg;
 	}
+};
 
-	void sendToClient(int clientSocket, const char* msg, int length)
-	{
-		send(clientSocket, msg, length, 0);
-	}
-
+class TcpListener
+{
 private:
 
-	const char*		m_ipAddress;	
-	int				m_port;			
-	int				m_socket;		
-	fd_set			m_master;		// Master file descriptor set
+	const char* IpAddress;
+	int	Port;
+	fd_set ListeningSockets;
+	fd_set ClientSockets;
+	//std::vector<ClientSocket> ClientSocks;
+	bool running = true;
+	timeval TimeOut = { 0,10000 };
+
+
+protected:
+
+	HANDLE hConsole = NULL;
+
+	enum ConsoleColor
+	{
+		Blue = 9, Green, Cyan, Red, Pink, Yellow, White
+	};
+
+	virtual void ConsoleLog(const char* str,ConsoleColor Cc)
+	{
+		SetConsoleTextAttribute(hConsole, Cc);
+		std::cout << str << "\n\n";
+	}
+
+	virtual void OnClientConnected(int ClientSocket)
+	{
+		ConsoleLog(std::string("Client " + std::to_string(ClientSocket) + " Connected").c_str(), Green);
+	}
+
+	virtual void OnClientDisconnected(int ClientSocket)
+	{
+		ConsoleLog(std::string("Client " + std::to_string(ClientSocket) + " Disconnected").c_str(), Red);
+		closesocket(ClientSocket);
+		FD_CLR(ClientSocket, &ClientSockets);
+	}
+
+
+public:
+
+	TcpListener(const char* ipAddress, int port) : IpAddress(ipAddress), Port(port)
+	{
+		hConsole =  GetStdHandle(STD_OUTPUT_HANDLE);
+		WSADATA wsData; WORD ver = MAKEWORD(2, 2);
+		int Error = WSAStartup(ver, &wsData);
+		if (Error)
+		{
+			MessageBoxA(NULL, ("WSAStartUp() failed with error: " + std::to_string(Error)).c_str(), "WinSock Error!", MB_OK | MB_ICONEXCLAMATION); exit(-1);
+		}
+		FD_ZERO(&ListeningSockets); FD_ZERO(&ClientSockets);
+		CreateListeningSocket(port);	
+	}
+
+	~TcpListener()
+	{
+		WSACleanup();
+	}
+
+	void CreateListeningSocket(int port)
+	{
+		SOCKET ListeningSocket = socket(AF_INET, SOCK_STREAM, 0);
+		if (ListeningSocket != INVALID_SOCKET)
+		{
+			sockaddr_in hint;
+			hint.sin_family = AF_INET; 
+			hint.sin_port = htons(port);
+			inet_pton(AF_INET, IpAddress, &hint.sin_addr);
+
+			if (bind(ListeningSocket, (sockaddr*)&hint, sizeof(hint)) != SOCKET_ERROR)
+			{
+				if (listen(ListeningSocket, SOMAXCONN) != SOCKET_ERROR)
+				{
+					//FD_ZERO(&ListeningSockets);
+					FD_SET(ListeningSocket, &ListeningSockets);
+					return;
+				}
+				MessageBoxA(NULL, ("listen() failed with error: " + std::to_string(WSAGetLastError())).c_str(), "WinSock Error!", MB_OK | MB_ICONEXCLAMATION); exit(-1);
+			}
+			MessageBoxA(NULL, ("bind() failed with error: " + std::to_string(WSAGetLastError())).c_str(), "WinSock Error!", MB_OK | MB_ICONEXCLAMATION); exit(-1);
+		}
+		MessageBoxA(NULL, ("socket() failed with error: " + std::to_string(WSAGetLastError())).c_str(), "WinSock Error!", MB_OK | MB_ICONEXCLAMATION); exit(-1);
+	}
+
+	void CheckListeningSockets()
+	{
+		fd_set ReadableSockets = ListeningSockets;
+		int socketCount = select(0, &ReadableSockets, nullptr, nullptr, &TimeOut);
+		for (int i = 0; i < socketCount; i++)
+		{
+			SOCKET client = accept(ReadableSockets.fd_array[i], nullptr, nullptr);
+			//ClientSocks.push_back(ClientSocket(client));
+			FD_SET(client, &ClientSockets);
+			OnClientConnected(client);
+		}
+	}
+
+	void CheckClientSockets()
+	{
+		fd_set ReadableSockets = ClientSockets;
+		int socketCount = select(0, &ReadableSockets, nullptr, nullptr, &TimeOut);
+		for (int i = 0; i < socketCount; i++)
+		{
+			SOCKET CurrClientSock = ReadableSockets.fd_array[i];
+			int BytesToRecv;
+			int BytesRecv = recv(CurrClientSock,(char*)&BytesToRecv, 4, 0);
+			if (BytesRecv == 4)
+			{
+				char* buf = new char[BytesToRecv]; ZeroMemory(buf, BytesToRecv);
+				BytesRecv = recv(CurrClientSock, buf, BytesToRecv, 0);
+				int BytesLeft = BytesToRecv - BytesRecv;;
+				while (!(BytesRecv == BytesToRecv))
+				{
+					BytesRecv = recv(CurrClientSock, buf, BytesToRecv - BytesLeft, 0);
+					BytesLeft -= BytesRecv;
+				}
+				//OnMessageReceived(CurrClientSock, buf, BytesRecv);
+			}
+			else if (BytesRecv == 0)
+					OnClientDisconnected(CurrClientSock);
+			else if (BytesRecv < 0)
+					ConsoleLog(std::string("Client Socket: " + std::to_string(CurrClientSock) + " threw error no " + std::to_string(WSAGetLastError())).c_str(), Red);				
+		}	
+	}
+
+	void Run()
+	{
+		while (running)
+		{
+			CheckListeningSockets();
+			CheckClientSockets();
+		}
+	}
 };
